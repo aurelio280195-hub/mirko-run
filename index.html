@@ -126,6 +126,21 @@
   .avatar-img.hidden{ display:none; }
   .avatar-placeholder{ font-size:34px; color:var(--gold); font-weight:300; }
   .avatar-hint{ font-size:12px; color:#9aa1b5; margin:0 0 18px 0; font-weight:600; }
+  .skin-row{
+    display:flex; gap:10px; justify-content:center; margin-bottom:22px;
+  }
+  .skin-swatch{
+    width:36px; height:36px; border-radius:50%;
+    border:3px solid transparent;
+    cursor:pointer;
+    box-shadow:0 2px 8px rgba(0,0,0,0.35);
+    transition:transform .12s ease, border-color .12s ease;
+  }
+  .skin-swatch:active{ transform:scale(0.92); }
+  .skin-swatch.selected{
+    border-color:#fff;
+    transform:scale(1.12);
+  }
 
   .controls-hint{
     position:absolute; bottom:env(safe-area-inset-bottom,16px); left:0; right:0;
@@ -158,6 +173,8 @@
     <div class="stat-row" id="start-best-row">
       <div class="stat"><b id="best-score-start">0</b><span>Record (m)</span></div>
     </div>
+    <p class="avatar-hint" style="margin-bottom:8px;">Scegli i colori di Mirko</p>
+    <div class="skin-row" id="skin-row"></div>
     <button class="btn" id="start-btn">INIZIA A CORRERE</button>
   </div>
 
@@ -271,6 +288,31 @@
     furia:  { name:'Furia Verde',    body:'#3e6b46', accent:'#24382a', skin:'#5a8a5f', hair:'#24382a', dur:9000, big:true },
     scudo:  { name:'Scudo Stellato', body:'#28406b', accent:'#9aa3b5', skin:'#d9a877', hair:'#2b2f38', dur:9000 }
   };
+  const MIRKO_BASE = { skin: FORMS.mirko.skin, hair: FORMS.mirko.hair };
+
+  // ---------- Skin customization (persisted in localStorage) ----------
+  const SKIN_KEY = 'mirkorun_skin';
+  const SKINS = [
+    { id:'blue',   body:'#3a5a8c', accent:'#2b2f38' },
+    { id:'red',    body:'#9c3a3a', accent:'#2b2f38' },
+    { id:'green',  body:'#3a8c5a', accent:'#243b2a' },
+    { id:'purple', body:'#6a3a8c', accent:'#2b2438' },
+    { id:'orange', body:'#c4762e', accent:'#3a2a1c' },
+    { id:'black',  body:'#33363f', accent:'#5a5f6b' }
+  ];
+  function getSelectedSkinId(){
+    try{ return localStorage.getItem(SKIN_KEY) || 'blue'; } catch(e){ return 'blue'; }
+  }
+  function setSelectedSkinId(id){
+    try{ localStorage.setItem(SKIN_KEY, id); } catch(e){}
+  }
+  function applySkin(id){
+    const s = SKINS.find(s=>s.id===id) || SKINS[0];
+    FORMS.mirko.body = s.body;
+    FORMS.mirko.accent = s.accent;
+    FORMS.mirko.skin = MIRKO_BASE.skin;
+    FORMS.mirko.hair = MIRKO_BASE.hair;
+  }
 
   function laneX(l){ return laneWidth * (l + 0.5); }
 
@@ -1221,6 +1263,26 @@
     reader.readAsDataURL(file);
   });
   loadAvatar();
+
+  // ---------- Build skin swatch picker ----------
+  (function initSkinPicker(){
+    const row = document.getElementById('skin-row');
+    const selected = getSelectedSkinId();
+    applySkin(selected);
+    SKINS.forEach(s=>{
+      const sw = document.createElement('div');
+      sw.className = 'skin-swatch' + (s.id===selected ? ' selected' : '');
+      sw.style.background = s.body;
+      sw.dataset.id = s.id;
+      sw.addEventListener('click', ()=>{
+        row.querySelectorAll('.skin-swatch').forEach(el=>el.classList.remove('selected'));
+        sw.classList.add('selected');
+        setSelectedSkinId(s.id);
+        applySkin(s.id);
+      });
+      row.appendChild(sw);
+    });
+  })();
   document.getElementById('best-score-start').textContent = getHighScore().distance;
 
   document.getElementById('start-btn').addEventListener('click', ()=>{
