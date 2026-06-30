@@ -1,4 +1,4 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="it">
 <head>
 <meta charset="UTF-8">
@@ -292,12 +292,13 @@
   function spawnRow(z){
     // z is world distance ahead
     const r = Math.random();
-    if (r < 0.55){
+    if (r < 0.50){
       // obstacle in one or two lanes
       const blocked = new Set();
       const count = Math.random() < 0.25 ? 2 : 1;
       while(blocked.size < count) blocked.add(Math.floor(Math.random()*LANES));
-      const type = Math.random() < 0.5 ? 'barrier' : 'cone';
+      const types = ['barrier','cone','pit','sign'];
+      const type = types[Math.floor(Math.random()*types.length)];
       blocked.forEach(l=>{
         entities.push({type, lane:l, z, dead:false});
       });
@@ -307,12 +308,16 @@
           spawnCoinArc(l, z);
         }
       }
-    } else if (r < 0.62){
+    } else if (r < 0.57){
       // powerup
       const l = Math.floor(Math.random()*LANES);
       const kinds = ['aracno','furia','scudo'];
       const kind = kinds[Math.floor(Math.random()*kinds.length)];
       entities.push({type:'power', kind, lane:l, z, dead:false});
+    } else if (r < 0.64 && distance > 1800){
+      // chaser drone: appears in a free lane, must be dodged by switching lanes
+      const l = Math.floor(Math.random()*LANES);
+      entities.push({type:'drone', lane:l, z, dead:false, t:0});
     } else {
       // coin row
       const l = Math.floor(Math.random()*LANES);
@@ -402,6 +407,7 @@
     for (const e of entities){
       e.z -= moveAmt;
       if (e.dead) continue;
+      if (e.type==='drone') e.t = (e.t||0) + dt;
       const ex = laneX(e.lane);
       const ez = e.z;
       // entity reaches "play zone" around z in [0, 60]
@@ -431,6 +437,38 @@
             } else if (form === 'furia'){
               e.dead = true;
               spawnBurst(ex, groundY-30, '#8fe39a', 14);
+              shake = 1.4;
+            }
+          } else if (e.type === 'pit'){
+            // must be jumping over it (in the air)
+            const clearing = !onGround;
+            if (!clearing && form !== 'furia'){
+              e.dead = true;
+              endRun();
+              return;
+            }
+          } else if (e.type === 'sign'){
+            // overhead sign: must duck/slide under it
+            const clearing = isSliding;
+            if (!clearing && form !== 'furia'){
+              e.dead = true;
+              endRun();
+              return;
+            } else if (form === 'furia' && !clearing){
+              e.dead = true;
+              spawnBurst(ex, groundY-60, '#8fe39a', 14);
+              shake = 1.4;
+            }
+          } else if (e.type === 'drone'){
+            // chaser drone occupies a lane at mid height; must switch lanes to dodge
+            const dodging = lane !== e.lane;
+            if (!dodging && form !== 'furia'){
+              e.dead = true;
+              endRun();
+              return;
+            } else if (form === 'furia' && !dodging){
+              e.dead = true;
+              spawnBurst(ex, groundY-50, '#8fe39a', 16);
               shake = 1.4;
             }
           }
@@ -706,6 +744,85 @@
     ctx.closePath();
   }
 
+  function drawPit(e){
+    const {x,y,scale} = screenForEntity(e);
+    ctx.save();
+    ctx.translate(x,y);
+    const w = laneWidth*0.85*scale, h = 20*scale;
+    // dark hole with gradient depth
+    const grad = ctx.createRadialGradient(0,-2,1, 0,0, w*0.5);
+    grad.addColorStop(0,'#0a0a0c');
+    grad.addColorStop(0.7,'#1c1c1f');
+    grad.addColorStop(1,'#2c2c30');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.ellipse(0,0,w*0.5,h*0.5,0,0,Math.PI*2); ctx.fill();
+    // warning stripes on edge
+    ctx.strokeStyle = 'rgba(232,104,47,0.7)';
+    ctx.lineWidth = Math.max(1.5, 2.5*scale);
+    ctx.beginPath(); ctx.ellipse(0,0,w*0.5,h*0.5,0,0,Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawSign(e){
+    const {x,y,scale} = screenForEntity(e);
+    ctx.save();
+    ctx.translate(x,y);
+    const poleH = 100*scale, signW = laneWidth*0.7*scale, signH = 26*scale;
+    const signY = -poleH + 8*scale; // hangs low enough to require sliding
+    // poles
+    ctx.strokeStyle = '#8a8f99';
+    ctx.lineWidth = Math.max(2, 4*scale);
+    ctx.beginPath();
+    ctx.moveTo(-signW*0.45, 0); ctx.lineTo(-signW*0.45, signY);
+    ctx.moveTo(signW*0.45, 0); ctx.lineTo(signW*0.45, signY);
+    ctx.stroke();
+    // sign board
+    const grad = ctx.createLinearGradient(0,signY-signH/2,0,signY+signH/2);
+    grad.addColorStop(0,'#ffd24d'); grad.addColorStop(1,'#e8a91f');
+    ctx.fillStyle = grad;
+    roundRect(-signW/2, signY-signH/2, signW, signH, 4*scale);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.lineWidth = Math.max(1,1.2*scale);
+    roundRect(-signW/2, signY-signH/2, signW, signH, 4*scale); ctx.stroke();
+    // warning chevron
+    ctx.fillStyle = '#2b2200';
+    ctx.font = `${Math.max(10,16*scale)}px sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('\u26A0', 0, signY);
+    ctx.restore();
+  }
+
+  function drawDrone(e){
+    const {x,y,scale} = screenForEntity(e);
+    const bob = Math.sin((e.t||0)*0.006)*6*scale;
+    ctx.save();
+    ctx.translate(x, y - 56*scale + bob);
+    // glow
+    const glow = ctx.createRadialGradient(0,0,2,0,0,30*scale);
+    glow.addColorStop(0,'rgba(255,70,70,0.45)'); glow.addColorStop(1,'transparent');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(0,0,30*scale,0,Math.PI*2); ctx.fill();
+    // body
+    const bw = 34*scale, bh = 16*scale;
+    const bGrad = ctx.createLinearGradient(0,-bh,0,bh);
+    bGrad.addColorStop(0,'#5a5f6b'); bGrad.addColorStop(1,'#2b2e36');
+    ctx.fillStyle = bGrad;
+    roundRect(-bw/2,-bh/2,bw,bh,bh*0.4); ctx.fill();
+    // rotor blur arms
+    ctx.strokeStyle = 'rgba(200,205,215,0.5)';
+    ctx.lineWidth = Math.max(1, 2*scale);
+    ctx.beginPath();
+    ctx.moveTo(-bw*0.6,-bh*0.6); ctx.lineTo(-bw*0.9,-bh*1.1);
+    ctx.moveTo(bw*0.6,-bh*0.6); ctx.lineTo(bw*0.9,-bh*1.1);
+    ctx.stroke();
+    // red eye/sensor
+    const eyeA = 0.5 + 0.5*Math.sin((e.t||0)*0.012);
+    ctx.fillStyle = `rgba(255,50,50,${0.6+0.4*eyeA})`;
+    ctx.beginPath(); ctx.arc(0,0,4.5*scale,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
   function drawPower(e){
     const {x,y,scale} = screenForEntity(e);
     const f = FORMS[e.kind];
@@ -907,6 +1024,9 @@
       else if (e.type==='cone') drawCone(e);
       else if (e.type==='barrier') drawBarrier(e);
       else if (e.type==='power') drawPower(e);
+      else if (e.type==='pit') drawPit(e);
+      else if (e.type==='sign') drawSign(e);
+      else if (e.type==='drone') drawDrone(e);
     }
     drawParticles();
     if (state !== 'idle') drawPlayer();
