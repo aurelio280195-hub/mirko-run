@@ -114,6 +114,19 @@
   .stat b{ display:block; font-size:22px; color:var(--gold); }
   .stat span{ font-size:11px; text-transform:uppercase; letter-spacing:0.6px; color:#aab; }
 
+  .avatar-wrap{
+    width:84px; height:84px; border-radius:50%;
+    background:rgba(255,255,255,0.08);
+    border:3px solid var(--gold);
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden; cursor:pointer; margin-bottom:6px;
+    box-shadow:0 4px 18px rgba(255,207,77,0.25);
+  }
+  .avatar-img{ width:100%; height:100%; object-fit:cover; }
+  .avatar-img.hidden{ display:none; }
+  .avatar-placeholder{ font-size:34px; color:var(--gold); font-weight:300; }
+  .avatar-hint{ font-size:12px; color:#9aa1b5; margin:0 0 18px 0; font-weight:600; }
+
   .controls-hint{
     position:absolute; bottom:env(safe-area-inset-bottom,16px); left:0; right:0;
     text-align:center; font-size:12px; color:rgba(255,255,255,0.55);
@@ -134,16 +147,27 @@
   <div class="controls-hint" id="hint">↑ / swipe su per saltare · ↓ / swipe gi&ugrave; per scivolare · ← → per cambiare corsia</div>
 
   <div class="overlay" id="start-overlay">
+    <div id="avatar-wrap" class="avatar-wrap">
+      <img id="avatar-img" class="avatar-img hidden" alt="Foto di Mirko">
+      <div id="avatar-placeholder" class="avatar-placeholder">+</div>
+    </div>
+    <input type="file" id="avatar-input" accept="image/*" style="display:none;">
+    <p class="avatar-hint">Tocca per aggiungere la foto di Mirko</p>
     <h1 class="title">MIRKO RUN</h1>
     <p class="subtitle">Corri, raccogli monete, trasformati in eroe.</p>
+    <div class="stat-row" id="start-best-row">
+      <div class="stat"><b id="best-score-start">0</b><span>Record (m)</span></div>
+    </div>
     <button class="btn" id="start-btn">INIZIA A CORRERE</button>
   </div>
 
   <div class="overlay hidden" id="end-overlay">
     <h1 class="title" style="font-size:32px;">FINE CORSA</h1>
+    <p id="record-banner" style="display:none; font-weight:800; color:var(--gold); margin:-8px 0 14px 0; font-size:15px;"></p>
     <div class="stat-row">
       <div class="stat"><b id="final-score">0</b><span>Metri</span></div>
       <div class="stat"><b id="final-coins">0</b><span>Monete</span></div>
+      <div class="stat"><b id="best-score-end">0</b><span>Record</span></div>
     </div>
     <button class="btn" id="retry-btn">RIPROVA</button>
   </div>
@@ -170,6 +194,38 @@
   }
   window.addEventListener('resize', resize);
   resize();
+
+  // ---------- Audio (synthesized, no external files) ----------
+  let actx = null;
+  function audioCtx(){
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+    return actx;
+  }
+  function beep({freq=440, dur=0.12, type='sine', vol=0.18, sweep=null, delay=0}){
+    try{
+      const ac = audioCtx();
+      const t0 = ac.currentTime + delay;
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t0);
+      if (sweep) osc.frequency.exponentialRampToValueAtTime(sweep, t0+dur);
+      gain.gain.setValueAtTime(vol, t0);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0+dur);
+      osc.connect(gain); gain.connect(ac.destination);
+      osc.start(t0); osc.stop(t0+dur+0.02);
+    } catch(e){}
+  }
+  const SFX = {
+    coin: ()=> { beep({freq:880, dur:0.08, type:'triangle', vol:0.16}); beep({freq:1320, dur:0.1, type:'triangle', vol:0.12, delay:0.04}); },
+    jump: ()=> beep({freq:300, dur:0.14, type:'square', vol:0.12, sweep:520}),
+    land: ()=> beep({freq:140, dur:0.08, type:'sine', vol:0.1}),
+    power: ()=> { beep({freq:220, dur:0.22, type:'sawtooth', vol:0.16, sweep:660}); beep({freq:440, dur:0.3, type:'triangle', vol:0.14, delay:0.08, sweep:880}); },
+    hit: ()=> { beep({freq:160, dur:0.3, type:'sawtooth', vol:0.2, sweep:60}); },
+    step: ()=> beep({freq:90, dur:0.04, type:'sine', vol:0.04})
+  };
+  let lastStepBeat = 0;
 
   // ---------- Game constants ----------
   const LANES = 3;
@@ -251,6 +307,7 @@
       velY = JUMP_V;
       onGround = false;
       spawnDust(playerX, groundY, 6);
+      SFX.jump();
     }
   }
   function slide(){
@@ -362,6 +419,10 @@
     distance += speed * dt;
     speed = baseSpeed + Math.min(distance/45000, 0.22);
     runCycle += dt * (0.012 + speed*0.01);
+    if (onGround && !isSliding){
+      const beat = Math.floor(runCycle*8/(Math.PI*2));
+      if (beat !== lastStepBeat){ lastStepBeat = beat; SFX.step(); }
+    }
 
     // player x lerp (frame-rate independent, smooth)
     const laneEase = 1 - Math.pow(0.001, dt/1000);
@@ -376,6 +437,7 @@
         velY = 0;
         onGround = true;
         spawnDust(playerX, groundY, 8);
+        SFX.land();
       }
     }
     if (isSliding){
@@ -419,6 +481,7 @@
             coins++;
             spawnBurst(ex, groundY-40, '#ffcf4d', 10);
             updateHUD();
+            SFX.coin();
           } else if (e.type === 'power'){
             e.dead = true;
             form = e.kind;
@@ -426,6 +489,7 @@
             setPowerPill(e.kind);
             spawnBurst(ex, groundY-40, FORMS[e.kind].body, 18);
             shake = 1;
+            SFX.power();
           } else if (e.type === 'barrier' || e.type === 'cone'){
             const obstTop = e.type === 'barrier' ? groundY-70 : groundY-34;
             const playerLow = isSliding && e.type==='barrier';
@@ -491,15 +555,51 @@
 
   function endRun(){
     state = 'dead';
-    document.getElementById('final-score').textContent = Math.floor(distance/30);
+    SFX.hit();
+    const finalDistance = Math.floor(distance/30);
+    document.getElementById('final-score').textContent = finalDistance;
     document.getElementById('final-coins').textContent = coins;
+    const isNewRecord = saveHighScore(finalDistance, coins);
+    const recordEl = document.getElementById('record-banner');
+    if (isNewRecord){
+      recordEl.textContent = '\u2B50 Nuovo record!';
+      recordEl.style.display = 'block';
+    } else {
+      recordEl.style.display = 'none';
+    }
+    document.getElementById('best-score-end').textContent = getHighScore().distance;
     document.getElementById('end-overlay').classList.remove('hidden');
+  }
+
+  // ---------- High score (persisted in localStorage) ----------
+  const HS_KEY = 'mirkorun_highscore';
+  function getHighScore(){
+    try{
+      const raw = localStorage.getItem(HS_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch(e){}
+    return { distance:0, coins:0 };
+  }
+  function saveHighScore(distance, coins){
+    const cur = getHighScore();
+    if (distance > cur.distance){
+      try{ localStorage.setItem(HS_KEY, JSON.stringify({distance, coins})); } catch(e){}
+      return true;
+    }
+    return false;
   }
 
   // ---------- Draw helpers ----------
   function lerp(a,b,t){ return a+(b-a)*t; }
 
+  function currentEnv(){
+    // alternates every ~2200 distance units: city, then countryside, etc.
+    return Math.floor(distance / 2200) % 2 === 0 ? 'city' : 'countryside';
+  }
+
   function drawSky(){
+    if (currentEnv() === 'countryside') { drawSkyCountryside(); return; }
+
     const g = ctx.createLinearGradient(0,0,0,horizonY+40);
     g.addColorStop(0, '#3a4456');
     g.addColorStop(0.45, '#7d8ba3');
@@ -545,6 +645,61 @@
         }
       }
       ctx.fillStyle = 'rgba(42,47,58,0.7)';
+    }
+  }
+
+  function drawSkyCountryside(){
+    // warmer, open-field sky
+    const g = ctx.createLinearGradient(0,0,0,horizonY+40);
+    g.addColorStop(0, '#4a6fa0');
+    g.addColorStop(0.45, '#9bb8d6');
+    g.addColorStop(0.8, '#d9c896');
+    g.addColorStop(1, '#e8d9a8');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,W,horizonY+40);
+
+    const haze = ctx.createLinearGradient(0,horizonY-60,0,horizonY+40);
+    haze.addColorStop(0,'rgba(230,225,190,0)');
+    haze.addColorStop(1,'rgba(235,228,195,0.6)');
+    ctx.fillStyle = haze;
+    ctx.fillRect(0,horizonY-60,W,100);
+
+    const sunX = W*0.28, sunY = horizonY*0.5;
+    const sg = ctx.createRadialGradient(sunX,sunY,2,sunX,sunY,150);
+    sg.addColorStop(0,'rgba(255,248,220,0.9)');
+    sg.addColorStop(0.3,'rgba(255,236,190,0.4)');
+    sg.addColorStop(1,'rgba(255,236,190,0)');
+    ctx.fillStyle = sg;
+    ctx.beginPath(); ctx.arc(sunX,sunY,150,0,Math.PI*2); ctx.fill();
+
+    // rolling hills, parallax
+    const off = (distance*0.018) % (W*2);
+    ctx.fillStyle = 'rgba(120,140,90,0.5)';
+    ctx.beginPath();
+    ctx.moveTo(-200,horizonY+10);
+    for (let x=-200; x<=W+200; x+=40){
+      const hx = x - off*0.5;
+      ctx.lineTo(x, horizonY+10 - 18*Math.sin((hx)*0.006));
+    }
+    ctx.lineTo(W+200,H); ctx.lineTo(-200,H); ctx.closePath(); ctx.fill();
+
+    ctx.fillStyle = 'rgba(90,115,65,0.6)';
+    ctx.beginPath();
+    ctx.moveTo(-200,horizonY+22);
+    for (let x=-200; x<=W+200; x+=40){
+      const hx = x - off*0.8;
+      ctx.lineTo(x, horizonY+22 - 12*Math.sin((hx)*0.009 + 1.5));
+    }
+    ctx.lineTo(W+200,H); ctx.lineTo(-200,H); ctx.closePath(); ctx.fill();
+
+    // scattered trees on horizon
+    const toff = (distance*0.035) % 220;
+    ctx.fillStyle = 'rgba(50,70,40,0.65)';
+    for (let i=-1;i<8;i++){
+      const tx = i*220 - toff;
+      const ty = horizonY+16;
+      ctx.beginPath(); ctx.arc(tx, ty-14, 13, 0, Math.PI*2); ctx.fill();
+      ctx.fillRect(tx-2, ty-4, 4, 14);
     }
   }
 
@@ -598,11 +753,12 @@
     ctx.fillRect(0,horizonY,W,H-horizonY);
     ctx.restore();
 
-    // sidewalks, muted concrete tone
-    ctx.fillStyle = '#8b8678';
+    // sidewalks/shoulders, env-aware tone
+    const isCountry = currentEnv() === 'countryside';
+    ctx.fillStyle = isCountry ? '#5e7a44' : '#8b8678';
     ctx.beginPath();
     ctx.moveTo(W*0.40, horizonY); ctx.lineTo(W*0.46,horizonY); ctx.lineTo(W*0.30,H); ctx.lineTo(-W*0.1,H); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#7e7a6e';
+    ctx.fillStyle = isCountry ? '#516b3a' : '#7e7a6e';
     ctx.beginPath();
     ctx.moveTo(W*0.60, horizonY); ctx.lineTo(W*0.54,horizonY); ctx.lineTo(W*0.70,H); ctx.lineTo(W*1.1,H); ctx.closePath(); ctx.fill();
 
@@ -1036,7 +1192,39 @@
   }
 
   // ---------- UI wiring ----------
+  // ---------- Avatar photo (persisted in localStorage as base64) ----------
+  const AVATAR_KEY = 'mirkorun_avatar';
+  function loadAvatar(){
+    try{
+      const data = localStorage.getItem(AVATAR_KEY);
+      if (data){
+        document.getElementById('avatar-img').src = data;
+        document.getElementById('avatar-img').classList.remove('hidden');
+        document.getElementById('avatar-placeholder').style.display = 'none';
+      }
+    } catch(e){}
+  }
+  document.getElementById('avatar-wrap').addEventListener('click', ()=>{
+    document.getElementById('avatar-input').click();
+  });
+  document.getElementById('avatar-input').addEventListener('change', (e)=>{
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev)=>{
+      const dataUrl = ev.target.result;
+      try{ localStorage.setItem(AVATAR_KEY, dataUrl); } catch(err){}
+      document.getElementById('avatar-img').src = dataUrl;
+      document.getElementById('avatar-img').classList.remove('hidden');
+      document.getElementById('avatar-placeholder').style.display = 'none';
+    };
+    reader.readAsDataURL(file);
+  });
+  loadAvatar();
+  document.getElementById('best-score-start').textContent = getHighScore().distance;
+
   document.getElementById('start-btn').addEventListener('click', ()=>{
+    audioCtx();
     document.getElementById('start-overlay').classList.add('hidden');
     resetGame();
     state = 'playing';
