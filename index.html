@@ -668,25 +668,32 @@
 
     // distant buildings silhouette, parallax with distance, muted realistic tones
     const off = (distance*0.02) % (W);
-    ctx.fillStyle = 'rgba(58,64,78,0.55)';
     for (let i=-1;i<6;i++){
       const bx = i*180 - off*0.6;
       const bh = 60 + ((i*53)%70);
+      const tone = 50 + (i*17)%22; // slight per-building tone variance
+      const bGrad = ctx.createLinearGradient(bx,0,bx+110,0);
+      bGrad.addColorStop(0, `rgba(${tone+4},${tone+9},${tone+22},0.55)`);
+      bGrad.addColorStop(1, `rgba(${tone+14},${tone+19},${tone+32},0.55)`);
+      ctx.fillStyle = bGrad;
       ctx.fillRect(bx, horizonY-bh+30, 110, bh);
     }
-    ctx.fillStyle = 'rgba(42,47,58,0.7)';
     for (let i=-1;i<7;i++){
       const bx = i*140 - off;
       const bh = 40 + ((i*37)%50);
+      const tone = 34 + (i*23)%20;
+      const bGrad = ctx.createLinearGradient(bx,0,bx+80,0);
+      bGrad.addColorStop(0, `rgba(${tone},${tone+5},${tone+16},0.72)`);
+      bGrad.addColorStop(1, `rgba(${tone+12},${tone+16},${tone+27},0.72)`);
+      ctx.fillStyle = bGrad;
       ctx.fillRect(bx, horizonY-bh+30, 80, bh);
-      // window lights, subtle
-      ctx.fillStyle = 'rgba(255,224,170,0.18)';
+      // window lights, subtle and irregular
+      ctx.fillStyle = 'rgba(255,224,170,0.16)';
       for (let wy=horizonY-bh+38; wy<horizonY+22; wy+=10){
         for (let wx=bx+6; wx<bx+74; wx+=14){
           if ((Math.floor(wx+wy)%5)<2) ctx.fillRect(wx,wy,4,5);
         }
       }
-      ctx.fillStyle = 'rgba(42,47,58,0.7)';
     }
   }
 
@@ -793,6 +800,26 @@
     shade.addColorStop(1,'rgba(20,20,20,0.35)');
     ctx.fillStyle = shade;
     ctx.fillRect(0,horizonY,W,H-horizonY);
+    // faint sky sheen reflected on asphalt near horizon (wet-look specular, very subtle)
+    const sheen = ctx.createLinearGradient(0,horizonY,0,horizonY+90);
+    sheen.addColorStop(0,'rgba(200,205,220,0.10)');
+    sheen.addColorStop(1,'rgba(200,205,220,0)');
+    ctx.fillStyle = sheen;
+    ctx.fillRect(0,horizonY,W,90);
+    // long tire skid marks for road wear realism
+    ctx.strokeStyle = 'rgba(15,15,17,0.28)';
+    ctx.lineWidth = 3;
+    const skidOff = (distance*0.15) % 900;
+    for (let s=0;s<2;s++){
+      const baseZ = s*450 - skidOff;
+      const d1 = depthForZ(((baseZ%900)+900)%900 + 200);
+      const d2 = depthForZ((((baseZ+260)%900)+900)%900 + 200);
+      const ly = lerp(W*0.44,W*0.5,0.5);
+      ctx.beginPath();
+      ctx.moveTo(lerp(W*0.46,laneX(0)+laneWidth*0.15,d1), lerp(horizonY,H,d1));
+      ctx.lineTo(lerp(W*0.46,laneX(0)+laneWidth*0.15,d2), lerp(horizonY,H,d2));
+      ctx.stroke();
+    }
     ctx.restore();
 
     // sidewalks/shoulders, env-aware tone
@@ -1053,6 +1080,27 @@
     ctx.closePath();
   }
 
+  let vignetteGrad = null, vignetteW=0, vignetteH=0;
+  function drawPostProcess(){
+    // vignette (rebuilt only when size changes, cheap to reuse)
+    if (!vignetteGrad || vignetteW!==W || vignetteH!==H){
+      vignetteW=W; vignetteH=H;
+      const cx=W/2, cy=H*0.55;
+      const r = Math.max(W,H)*0.75;
+      vignetteGrad = ctx.createRadialGradient(cx,cy,r*0.35, cx,cy,r);
+      vignetteGrad.addColorStop(0,'rgba(0,0,0,0)');
+      vignetteGrad.addColorStop(1,'rgba(0,0,0,0.34)');
+    }
+    ctx.fillStyle = vignetteGrad;
+    ctx.fillRect(0,0,W,H);
+    // subtle warm-cool split tone for photographic feel (very low opacity)
+    const grade = ctx.createLinearGradient(0,0,0,H);
+    grade.addColorStop(0,'rgba(40,55,80,0.05)');
+    grade.addColorStop(1,'rgba(60,45,25,0.05)');
+    ctx.fillStyle = grade;
+    ctx.fillRect(0,0,W,H);
+  }
+
   function drawParticles(){
     for (const p of particles){
       const t = p.age/p.life;
@@ -1074,24 +1122,30 @@
     const x = playerX;
     const baseY = playerY;
     const legPhase = Math.sin(runCycle*8);
-    const bodyH = isSliding ? 36 : (big ? 96 : 76);
-    const bodyW = big ? 46 : 30;
-    const headR = big ? 17 : 13;
+    const bodyH = isSliding ? 36 : (big ? 100 : 80);
+    const bodyW = big ? 44 : 27;
+    const headR = big ? 15.5 : 11.5;
 
     ctx.save();
     ctx.translate(x, baseY);
 
-    // shadow
-    const airT = onGround ? 1 : Math.max(0.3, 1 - (groundY-playerY)/140);
-    ctx.fillStyle = `rgba(0,0,0,${0.32*airT})`;
-    ctx.beginPath(); ctx.ellipse(0, 4, bodyW*0.6, 8, 0,0,Math.PI*2); ctx.fill();
+    // contact shadow, soft and elongated (directional, matches sun from upper-right)
+    const airT = onGround ? 1 : Math.max(0.25, 1 - (groundY-playerY)/140);
+    const shGrad = ctx.createRadialGradient(2,4,1, 2,4, bodyW*0.7);
+    shGrad.addColorStop(0, `rgba(10,10,12,${0.38*airT})`);
+    shGrad.addColorStop(1, `rgba(10,10,12,0)`);
+    ctx.fillStyle = shGrad;
+    ctx.beginPath(); ctx.ellipse(2, 4, bodyW*0.7, 8, 0,0,Math.PI*2); ctx.fill();
 
     const lift = onGround ? 0 : (groundY-playerY);
     ctx.translate(0, -lift);
 
     if (isSliding){
-      // sliding pose: low horizontal capsule
-      ctx.fillStyle = f.body;
+      // sliding pose: low horizontal capsule, still shaded not flat
+      const slideGrad = ctx.createLinearGradient(0,-bodyH,0,0);
+      slideGrad.addColorStop(0, lighten(f.body,14));
+      slideGrad.addColorStop(1, darken(f.body,10));
+      ctx.fillStyle = slideGrad;
       roundRect(-bodyW*0.9, -bodyH, bodyW*1.8, bodyH, 14);
       ctx.fill();
       ctx.fillStyle = f.skin;
@@ -1099,64 +1153,82 @@
     } else {
       const runT = onGround ? Math.sin(runCycle*8) : 0;
       const runT2 = onGround ? Math.sin(runCycle*8+Math.PI) : 0;
-      const limbW = big ? 13 : 9;
+      const limbW = big ? 12.5 : 8.5;
+      const legColorBack = form==='mirko' ? '#2c3b52' : darken(f.accent,10);
+      const legColorFront = form==='mirko' ? '#37496b' : f.accent;
 
-      // back leg
-      ctx.fillStyle = form==='mirko' ? '#33445e' : darken(f.accent,10);
-      drawLimb(bodyW*0.16, -bodyH*0.4, runT2*14, bodyH*0.42-2, limbW);
+      // back leg (shaded cylinder, darker overall - further from light)
+      drawLimb(bodyW*0.16, -bodyH*0.4, runT2*13, bodyH*0.42-2, limbW, darken(legColorBack,6));
       // back arm
-      ctx.fillStyle = darken(f.body,10);
-      drawLimb(bodyW*0.42, -bodyH*0.58, -runT*10, bodyH*0.32, limbW*0.85);
+      drawLimb(bodyW*0.42, -bodyH*0.58, -runT*9, bodyH*0.32, limbW*0.82, darken(f.body,14));
 
-      // torso
-      const grad = ctx.createLinearGradient(0,-bodyH,0,0);
-      grad.addColorStop(0, lighten(f.body,22));
-      grad.addColorStop(1, f.body);
-      ctx.fillStyle = grad;
-      roundRect(-bodyW/2, -bodyH, bodyW, bodyH*0.62, big?16:11);
+      // torso: side-lit volume (light from upper right, so right edge brighter)
+      const tGrad = ctx.createLinearGradient(-bodyW/2,0,bodyW/2,0);
+      tGrad.addColorStop(0, darken(f.body,14));
+      tGrad.addColorStop(0.55, f.body);
+      tGrad.addColorStop(1, lighten(f.body,16));
+      ctx.fillStyle = tGrad;
+      roundRect(-bodyW/2, -bodyH, bodyW, bodyH*0.62, big?15:10);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-      ctx.lineWidth = 1.5;
-      roundRect(-bodyW/2, -bodyH, bodyW, bodyH*0.62, big?16:11); ctx.stroke();
+      // top-down ambient occlusion (shoulders catch more light than waist)
+      const aoGrad = ctx.createLinearGradient(0,-bodyH,0,-bodyH*0.38);
+      aoGrad.addColorStop(0,'rgba(255,255,255,0.10)');
+      aoGrad.addColorStop(1,'rgba(0,0,0,0.14)');
+      ctx.fillStyle = aoGrad;
+      roundRect(-bodyW/2, -bodyH, bodyW, bodyH*0.62, big?15:10);
+      ctx.fill();
+      // subtle fabric crease
+      ctx.strokeStyle = 'rgba(0,0,0,0.14)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-bodyW*0.22, -bodyH*0.5); ctx.quadraticCurveTo(0,-bodyH*0.44, bodyW*0.2,-bodyH*0.5);
+      ctx.stroke();
 
-      // chest accent emblem
-      ctx.fillStyle = f.accent;
-      const emW = bodyW*0.4, emH = bodyH*0.26;
-      roundRect(-emW/2, -bodyH*0.92, emW, emH, 6);
+      // chest accent emblem, slightly recessed look
+      ctx.fillStyle = darken(f.accent,4);
+      const emW = bodyW*0.38, emH = bodyH*0.24;
+      roundRect(-emW/2, -bodyH*0.92, emW, emH, 5);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      roundRect(-emW/2, -bodyH*0.92, emW, emH*0.4, 4);
       ctx.fill();
 
-      // front leg
-      ctx.fillStyle = form==='mirko' ? '#3d5273' : f.accent;
-      drawLimb(-bodyW*0.16, -bodyH*0.4, runT*14, bodyH*0.42-2, limbW);
+      // front leg (closer to light, brighter)
+      drawLimb(-bodyW*0.16, -bodyH*0.4, runT*13, bodyH*0.42-2, limbW, legColorFront);
       // front arm
-      ctx.fillStyle = f.body;
-      drawLimb(-bodyW*0.42, -bodyH*0.58, runT*10, bodyH*0.32, limbW*0.85);
+      drawLimb(-bodyW*0.42, -bodyH*0.58, runT*9, bodyH*0.32, limbW*0.82, lighten(f.body,6));
 
-      // neck
-      ctx.fillStyle = f.skin;
-      roundRect(-bodyW*0.12, -bodyH-6, bodyW*0.24, 12, 4); ctx.fill();
+      // neck with slight shadow under jaw
+      ctx.fillStyle = darken(f.skin,6);
+      roundRect(-bodyW*0.12, -bodyH-5, bodyW*0.24, 11, 4); ctx.fill();
 
-      // head
-      const headCY = -bodyH-headR*0.7;
-      const headGrad = ctx.createRadialGradient(-headR*0.3,-headR*0.3,1, 0,headCY,headR*1.2);
-      headGrad.addColorStop(0, lighten(f.skin,14));
-      headGrad.addColorStop(0.7, f.skin);
-      headGrad.addColorStop(1, darken(f.skin,18));
+      // head: soft directional lighting, no cartoon outline
+      const headCY = -bodyH-headR*0.75;
+      const headGrad = ctx.createRadialGradient(headR*0.35,-headR*0.35,1, 0,headCY,headR*1.3);
+      headGrad.addColorStop(0, lighten(f.skin,18));
+      headGrad.addColorStop(0.6, f.skin);
+      headGrad.addColorStop(1, darken(f.skin,22));
       ctx.fillStyle = headGrad;
       ctx.beginPath(); ctx.arc(0, headCY, headR, 0, Math.PI*2); ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.arc(0, headCY, headR, 0, Math.PI*2); ctx.stroke();
-      // hair (natural, not a flat mask)
+
+      // hair, natural volume with a highlight
       ctx.fillStyle = f.hair || f.accent;
       ctx.beginPath();
-      ctx.arc(0, -bodyH-headR*0.7 - headR*0.1, headR*1.04, Math.PI*1.02, Math.PI*1.98);
+      ctx.arc(0, headCY - headR*0.12, headR*1.05, Math.PI*1.0, Math.PI*2.0);
       ctx.fill();
-      // simple eyes for friendliness
+      ctx.fillStyle = lighten(f.hair||f.accent, 14);
+      ctx.beginPath();
+      ctx.arc(headR*0.25, headCY - headR*0.55, headR*0.4, 0, Math.PI*2);
+      ctx.fill();
+
+      // subtle facial shading instead of cartoon dot-eyes: soft brow/eye shadow only
       if (!big || form==='mirko'){
-        ctx.fillStyle = '#1c2230';
-        ctx.beginPath(); ctx.arc(-headR*0.32, -bodyH-headR*0.65, headR*0.13, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.arc(headR*0.32, -bodyH-headR*0.65, headR*0.13, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = 'rgba(30,20,15,0.28)';
+        ctx.beginPath(); ctx.ellipse(-headR*0.34, headCY-headR*0.05, headR*0.17, headR*0.08, 0, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(headR*0.34, headCY-headR*0.05, headR*0.17, headR*0.08, 0, 0, Math.PI*2); ctx.fill();
+        // faint nose shadow for facial structure
+        ctx.fillStyle = 'rgba(20,15,10,0.12)';
+        ctx.beginPath(); ctx.ellipse(headR*0.06, headCY+headR*0.22, headR*0.1, headR*0.16, 0, 0, Math.PI*2); ctx.fill();
       }
     }
 
@@ -1179,12 +1251,20 @@
     return `rgb(${r},${g},${b})`;
   }
   function darken(hex, amt){ return lighten(hex, -amt); }
-  function drawLimb(originX, originY, swingX, length, width){
+  function drawLimb(originX, originY, swingX, length, width, baseColor){
     // draws a filled rounded limb from origin, swinging forward/back
     const endX = originX + swingX;
     const endY = originY + length;
     const midX = (originX+endX)/2 + swingX*0.15;
     const midY = originY + length*0.5;
+    if (baseColor){
+      // cylindrical shading: light-mid-dark across width for rounded volume
+      const g = ctx.createLinearGradient(originX-width/2,0,originX+width/2,0);
+      g.addColorStop(0, darken(baseColor,16));
+      g.addColorStop(0.45, lighten(baseColor,10));
+      g.addColorStop(1, darken(baseColor,8));
+      ctx.fillStyle = g;
+    }
     ctx.beginPath();
     ctx.moveTo(originX - width/2, originY);
     ctx.quadraticCurveTo(midX - width/2, midY, endX - width*0.35, endY);
@@ -1228,6 +1308,7 @@
     }
     drawParticles();
     if (state !== 'idle') drawPlayer();
+    drawPostProcess();
     ctx.restore();
 
     requestAnimationFrame(frame);
@@ -1304,3 +1385,4 @@
 </script>
 </body>
 </html>
+
