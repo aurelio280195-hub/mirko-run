@@ -75,6 +75,7 @@
     z-index:10;
     text-align:center;
     padding:24px;
+    overflow-y:auto;
   }
   .overlay.hidden{ display:none; }
   .title{
@@ -142,6 +143,29 @@
     transform:scale(1.12);
   }
 
+  .missions-box{
+    width:100%; max-width:280px;
+    background:rgba(255,255,255,0.05);
+    border:1px solid rgba(255,255,255,0.1);
+    border-radius:14px;
+    padding:10px 14px;
+    margin:0 0 18px 0;
+  }
+  .missions-title{
+    font-size:11px; text-transform:uppercase; letter-spacing:0.6px;
+    color:var(--gold); font-weight:800; margin-bottom:8px; text-align:left;
+  }
+  .mission-row{
+    display:flex; align-items:center; gap:8px;
+    font-size:12px; color:#d5d8e2; text-align:left;
+    padding:4px 0;
+  }
+  .mission-row.done{ color:#8fe39a; }
+  .mission-check{ font-size:13px; flex-shrink:0; }
+  .mission-label{ flex:1; }
+  .mission-progress{ font-weight:700; color:#9aa1b5; flex-shrink:0; }
+  .mission-row.done .mission-progress{ color:#8fe39a; }
+
   .controls-hint{
     position:absolute; bottom:env(safe-area-inset-bottom,16px); left:0; right:0;
     text-align:center; font-size:12px; color:rgba(255,255,255,0.55);
@@ -175,12 +199,17 @@
     </div>
     <p class="avatar-hint" style="margin-bottom:8px;">Scegli i colori di Mirko</p>
     <div class="skin-row" id="skin-row"></div>
+    <div class="missions-box">
+      <div class="missions-title">Missioni di oggi</div>
+      <div id="missions-list"></div>
+    </div>
     <button class="btn" id="start-btn">INIZIA A CORRERE</button>
   </div>
 
   <div class="overlay hidden" id="end-overlay">
     <h1 class="title" style="font-size:32px;">FINE CORSA</h1>
-    <p id="record-banner" style="display:none; font-weight:800; color:var(--gold); margin:-8px 0 14px 0; font-size:15px;"></p>
+    <p id="record-banner" style="display:none; font-weight:800; color:var(--gold); margin:-8px 0 4px 0; font-size:15px;"></p>
+    <p id="mission-banner" style="display:none; font-weight:800; color:#8fe39a; margin:-8px 0 14px 0; font-size:14px;"></p>
     <div class="stat-row">
       <div class="stat"><b id="final-score">0</b><span>Metri</span></div>
       <div class="stat"><b id="final-coins">0</b><span>Monete</span></div>
@@ -277,6 +306,7 @@
   let form = 'mirko'; // mirko, aracno, furia, scudo
   let invulnFlicker = 0;
   let entities = []; // obstacles, coins, powerups
+  let runStats = { jumps:0, slides:0, powerups:0, drones:0 };
   let particles = [];
   let cameraBob = 0;
   let runCycle = 0;
@@ -335,6 +365,7 @@
     speed = baseSpeed;
     invulnFlicker = 0;
     shake = 0;
+    runStats = { jumps:0, slides:0, powerups:0, drones:0 };
     updateHUD();
     setPowerPill(null);
   }
@@ -350,12 +381,14 @@
       onGround = false;
       spawnDust(playerX, groundY, 6);
       SFX.jump();
+      runStats.jumps++;
     }
   }
   function slide(){
     if (onGround && !isSliding){
       isSliding = true;
       slideTimer = 520;
+      runStats.slides++;
     }
   }
 
@@ -532,6 +565,7 @@
             spawnBurst(ex, groundY-40, FORMS[e.kind].body, 18);
             shake = 1;
             SFX.power();
+            runStats.powerups++;
           } else if (e.type === 'barrier' || e.type === 'cone'){
             const obstTop = e.type === 'barrier' ? groundY-70 : groundY-34;
             const playerLow = isSliding && e.type==='barrier';
@@ -581,6 +615,9 @@
         }
       }
     }
+    for (const e of entities){
+      if (e.type==='drone' && !e.dead && e.z <= -80) runStats.drones++;
+    }
     entities = entities.filter(e => !e.dead && e.z > -80);
 
     // particles
@@ -610,6 +647,18 @@
       recordEl.style.display = 'none';
     }
     document.getElementById('best-score-end').textContent = getHighScore().distance;
+
+    // update daily missions progress with this run's stats
+    const missionResult = updateMissionsProgress(finalDistance, coins, runStats);
+    const missionEl = document.getElementById('mission-banner');
+    if (missionResult.anyNewComplete){
+      missionEl.textContent = '\u2705 Missione completata!';
+      missionEl.style.display = 'block';
+    } else {
+      missionEl.style.display = 'none';
+    }
+    renderMissionsList();
+
     document.getElementById('end-overlay').classList.remove('hidden');
   }
 
@@ -629,6 +678,90 @@
       return true;
     }
     return false;
+  }
+
+  // ---------- Daily missions (persisted in localStorage, reset each day) ----------
+  const MISSIONS_KEY = 'mirkorun_missions';
+  const MISSION_POOL = [
+    { id:'coins10',  key:'coins',    label:'Raccogli {t} monete',        target:10 },
+    { id:'coins25',  key:'coins',    label:'Raccogli {t} monete',        target:25 },
+    { id:'coins50',  key:'coins',    label:'Raccogli {t} monete',        target:50 },
+    { id:'dist400',  key:'distance', label:'Percorri {t}m in una corsa', target:400,  single:true },
+    { id:'dist800',  key:'distance', label:'Percorri {t}m in una corsa', target:800,  single:true },
+    { id:'jump15',   key:'jumps',    label:'Salta {t} volte',            target:15 },
+    { id:'jump30',   key:'jumps',    label:'Salta {t} volte',            target:30 },
+    { id:'slide10',  key:'slides',   label:'Scivola {t} volte',          target:10 },
+    { id:'power3',   key:'powerups', label:'Attiva {t} power-up',        target:3 },
+    { id:'power6',   key:'powerups', label:'Attiva {t} power-up',        target:6 },
+    { id:'drone5',   key:'drones',   label:'Schiva {t} droni',           target:5 }
+  ];
+  function todayKey(){
+    const d = new Date();
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  }
+  function hashStr(s){
+    let h = 0;
+    for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) >>> 0;
+    return h;
+  }
+  function pickDailyMissions(dateStr){
+    let s = hashStr(dateStr) || 1;
+    function rnd(){ s = (s*1103515245 + 12345) >>> 0; return (s >>> 8) / 0x1000000; }
+    const pool = [...MISSION_POOL];
+    for (let i=pool.length-1;i>0;i--){
+      const j = Math.floor(rnd()*(i+1));
+      [pool[i],pool[j]] = [pool[j],pool[i]];
+    }
+    return pool.slice(0,3).map(m => ({...m, progress:0, done:false}));
+  }
+  function loadMissions(){
+    let data = null;
+    try{ data = JSON.parse(localStorage.getItem(MISSIONS_KEY) || 'null'); } catch(e){}
+    const tk = todayKey();
+    if (!data || data.date !== tk){
+      data = { date: tk, missions: pickDailyMissions(tk) };
+      saveMissionsData(data);
+    }
+    return data;
+  }
+  function saveMissionsData(data){
+    try{ localStorage.setItem(MISSIONS_KEY, JSON.stringify(data)); } catch(e){}
+  }
+  function updateMissionsProgress(runMeters, runCoins, stats){
+    const data = loadMissions();
+    let anyNewComplete = false;
+    data.missions.forEach(m=>{
+      if (m.done) return;
+      let val = 0;
+      if (m.key==='coins') val = runCoins;
+      else if (m.key==='jumps') val = stats.jumps;
+      else if (m.key==='slides') val = stats.slides;
+      else if (m.key==='powerups') val = stats.powerups;
+      else if (m.key==='drones') val = stats.drones;
+      else if (m.key==='distance') val = runMeters;
+
+      m.progress = m.single ? Math.max(m.progress, val) : Math.min(m.target, m.progress + val);
+      if (m.progress >= m.target && !m.done){
+        m.done = true;
+        anyNewComplete = true;
+      }
+    });
+    saveMissionsData(data);
+    return { data, anyNewComplete };
+  }
+  function renderMissionsList(){
+    const data = loadMissions();
+    const list = document.getElementById('missions-list');
+    list.innerHTML = '';
+    data.missions.forEach(m=>{
+      const row = document.createElement('div');
+      row.className = 'mission-row' + (m.done ? ' done' : '');
+      const label = m.label.replace('{t}', m.target);
+      row.innerHTML = `<span class="mission-check">${m.done ? '\u2705' : '\u2B1C'}</span>
+        <span class="mission-label">${label}</span>
+        <span class="mission-progress">${Math.min(m.progress,m.target)}/${m.target}</span>`;
+      list.appendChild(row);
+    });
   }
 
   // ---------- Draw helpers ----------
@@ -1344,6 +1477,7 @@
     reader.readAsDataURL(file);
   });
   loadAvatar();
+  renderMissionsList();
 
   // ---------- Build skin swatch picker ----------
   (function initSkinPicker(){
@@ -1385,4 +1519,3 @@
 </script>
 </body>
 </html>
-
