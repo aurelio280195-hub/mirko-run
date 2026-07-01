@@ -127,6 +127,28 @@
   .avatar-img.hidden{ display:none; }
   .avatar-placeholder{ font-size:34px; color:var(--gold); font-weight:300; }
   .avatar-hint{ font-size:12px; color:#9aa1b5; margin:0 0 18px 0; font-weight:600; }
+  .vehicle-row{
+    display:flex; gap:10px; justify-content:center; margin-bottom:18px;
+  }
+  .vehicle-btn{
+    appearance:none; border:2px solid rgba(255,255,255,0.12);
+    background:rgba(255,255,255,0.05);
+    border-radius:14px;
+    padding:10px 16px;
+    display:flex; flex-direction:column; align-items:center; gap:4px;
+    font-size:22px;
+    color:#d5d8e2;
+    cursor:pointer;
+    transition:transform .1s ease, border-color .1s ease, background .1s ease;
+  }
+  .vehicle-btn span{ font-size:11px; font-weight:700; letter-spacing:0.3px; }
+  .vehicle-btn:active{ transform:scale(0.94); }
+  .vehicle-btn.selected{
+    border-color:var(--gold);
+    background:rgba(255,207,77,0.14);
+    color:#fff;
+  }
+
   .skin-row{
     display:flex; gap:10px; justify-content:center; margin-bottom:22px;
   }
@@ -196,6 +218,12 @@
     <p class="subtitle">Corri, raccogli monete, trasformati in eroe.</p>
     <div class="stat-row" id="start-best-row">
       <div class="stat"><b id="best-score-start">0</b><span>Record (m)</span></div>
+    </div>
+    <p class="avatar-hint" style="margin-bottom:8px;">Scegli il mezzo</p>
+    <div class="vehicle-row" id="vehicle-row">
+      <button class="vehicle-btn" data-vehicle="character">🏃<span>Mirko</span></button>
+      <button class="vehicle-btn" data-vehicle="car">🚗<span>Auto</span></button>
+      <button class="vehicle-btn" data-vehicle="moto">🏍️<span>Moto</span></button>
     </div>
     <p class="avatar-hint" style="margin-bottom:8px;">Scegli i colori di Mirko</p>
     <div class="skin-row" id="skin-row"></div>
@@ -307,6 +335,7 @@
   let invulnFlicker = 0;
   let entities = []; // obstacles, coins, powerups
   let runStats = { jumps:0, slides:0, powerups:0, drones:0 };
+  let vehicle = 'character'; // character | car | moto
   let particles = [];
   let cameraBob = 0;
   let runCycle = 0;
@@ -913,6 +942,28 @@
     asphaltPattern = ctx.createPattern(pc,'repeat');
   }
 
+  let paintGrainPattern = null;
+  function buildPaintGrainPattern(){
+    const pc = document.createElement('canvas');
+    pc.width = 18; pc.height = 18;
+    const pctx = pc.getContext('2d');
+    for (let i=0;i<55;i++){
+      const x = Math.random()*18, y = Math.random()*18;
+      pctx.fillStyle = Math.random()<0.5 ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.14)';
+      pctx.fillRect(x,y,0.7,0.7);
+    }
+    paintGrainPattern = ctx.createPattern(pc,'repeat');
+  }
+  function applyPaintGrain(pathFn, alpha){
+    if (!paintGrainPattern) buildPaintGrainPattern();
+    ctx.save();
+    ctx.globalAlpha = alpha!==undefined?alpha:0.5;
+    ctx.fillStyle = paintGrainPattern;
+    pathFn();
+    ctx.fill();
+    ctx.restore();
+  }
+
   function drawRoad(){
     if (!asphaltPattern) buildAsphaltPattern();
     // trapezoid road, realistic worn asphalt
@@ -1254,25 +1305,54 @@
     const big = !!f.big;
     const x = playerX;
     const baseY = playerY;
-    const legPhase = Math.sin(runCycle*8);
-    const bodyH = isSliding ? 36 : (big ? 100 : 80);
-    const bodyW = big ? 44 : 27;
-    const headR = big ? 15.5 : 11.5;
+
+    // dimensions depend on selected vehicle
+    let bodyH, bodyW, headR;
+    if (vehicle === 'car'){
+      bodyW = (big ? 62 : 50);
+      bodyH = isSliding ? 24 : (big ? 58 : 48);
+      headR = 0;
+    } else if (vehicle === 'moto'){
+      bodyW = big ? 36 : 27;
+      bodyH = isSliding ? 30 : (big ? 82 : 66);
+      headR = big ? 13.5 : 10.5;
+    } else {
+      bodyW = big ? 44 : 27;
+      bodyH = isSliding ? 36 : (big ? 100 : 80);
+      headR = big ? 15.5 : 11.5;
+    }
 
     ctx.save();
     ctx.translate(x, baseY);
 
     // contact shadow, soft and elongated (directional, matches sun from upper-right)
     const airT = onGround ? 1 : Math.max(0.25, 1 - (groundY-playerY)/140);
-    const shGrad = ctx.createRadialGradient(2,4,1, 2,4, bodyW*0.7);
+    const shGrad = ctx.createRadialGradient(2,4,1, 2,4, bodyW*0.75);
     shGrad.addColorStop(0, `rgba(10,10,12,${0.38*airT})`);
     shGrad.addColorStop(1, `rgba(10,10,12,0)`);
     ctx.fillStyle = shGrad;
-    ctx.beginPath(); ctx.ellipse(2, 4, bodyW*0.7, 8, 0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(2, 4, bodyW*0.75, 8, 0,0,Math.PI*2); ctx.fill();
 
     const lift = onGround ? 0 : (groundY-playerY);
     ctx.translate(0, -lift);
 
+    if (vehicle === 'car') drawCarBody(f, bodyW, bodyH, big);
+    else if (vehicle === 'moto') drawMotoBody(f, bodyW, bodyH, headR, big);
+    else drawCharacterBody(f, bodyW, bodyH, headR, big);
+
+    if (powerTimer > 0){
+      const a = 0.35 + 0.25*Math.sin(runCycle*10);
+      ctx.strokeStyle = f.body;
+      ctx.globalAlpha = a;
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(0,-bodyH*0.55, bodyW*1.3, 0, Math.PI*2); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.restore();
+  }
+
+  function drawCharacterBody(f, bodyW, bodyH, headR, big){
     if (isSliding){
       // sliding pose: low horizontal capsule, still shaded not flat
       const slideGrad = ctx.createLinearGradient(0,-bodyH,0,0);
@@ -1364,18 +1444,330 @@
         ctx.beginPath(); ctx.ellipse(headR*0.06, headCY+headR*0.22, headR*0.1, headR*0.16, 0, 0, Math.PI*2); ctx.fill();
       }
     }
+  }
 
-    if (powerTimer > 0){
-      const a = 0.35 + 0.25*Math.sin(runCycle*10);
-      ctx.strokeStyle = f.body;
-      ctx.globalAlpha = a;
-      ctx.lineWidth = 4;
-      ctx.beginPath(); ctx.arc(0,-bodyH*0.55, bodyW*1.3, 0, Math.PI*2); ctx.stroke();
-      ctx.globalAlpha = 1;
+  function drawCarBody(f, bodyW, bodyH, big){
+    const w = bodyW, h = bodyH;
+    const hoodH = h;
+    const wheelR = w*(big?0.20:0.16);
+    const wheelX = w*0.48; // near the edge so wheels clearly poke out past the body silhouette
+    const isCountry = currentEnv() === 'countryside';
+
+    // individual wheel contact shadows (grounds them, separates from body shadow)
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    [-1,1].forEach(side=>{
+      ctx.beginPath(); ctx.ellipse(side*wheelX, 6, wheelR*0.95, 3.2, 0,0,Math.PI*2); ctx.fill();
+    });
+
+    // wheels: tire + tread + metallic rim + spokes, clearly separated from the body
+    [-1,1].forEach(side=>{
+      const wx = side*wheelX;
+      ctx.fillStyle = '#26262c';
+      ctx.beginPath(); ctx.ellipse(wx, 2, wheelR*0.62, wheelR, 0,0,Math.PI*2); ctx.fill();
+      // tread marks around the tire edge
+      ctx.strokeStyle = 'rgba(10,10,12,0.7)'; ctx.lineWidth = 1;
+      for (let a=0; a<Math.PI*2; a+=Math.PI/7){
+        ctx.beginPath();
+        ctx.moveTo(wx+Math.cos(a)*wheelR*0.55, 2+Math.sin(a)*wheelR*0.92);
+        ctx.lineTo(wx+Math.cos(a)*wheelR*0.68, 2+Math.sin(a)*wheelR*1.06);
+        ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(205,210,220,0.55)';
+      ctx.beginPath(); ctx.ellipse(wx, 2, wheelR*0.28, wheelR*0.46, 0,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle = 'rgba(55,58,66,0.85)'; ctx.lineWidth = 1.1;
+      for (let a=0.3; a<Math.PI*2; a+=Math.PI/2.5){
+        ctx.beginPath();
+        ctx.moveTo(wx, 2);
+        ctx.lineTo(wx + Math.cos(a)*wheelR*0.26, 2 + Math.sin(a)*wheelR*0.42);
+        ctx.stroke();
+      }
+      // wheel arch shadow where wheel tucks under the body (assembled-object depth)
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.beginPath(); ctx.ellipse(wx, -wheelR*0.5, wheelR*0.7, wheelR*0.5, 0, Math.PI, Math.PI*2); ctx.fill();
+    });
+
+    // paint gradient, side-lit (photographic gloss)
+    const bodyGrad = ctx.createLinearGradient(-w/2,0,w/2,0);
+    bodyGrad.addColorStop(0, darken(f.body,16));
+    bodyGrad.addColorStop(0.5, f.body);
+    bodyGrad.addColorStop(1, lighten(f.body,20));
+
+    // hood/lower body
+    ctx.fillStyle = bodyGrad;
+    roundRect(-w/2, -hoodH, w, hoodH, 11);
+    ctx.fill();
+    const aoGrad = ctx.createLinearGradient(0,-hoodH,0,-hoodH*0.4);
+    aoGrad.addColorStop(0,'rgba(255,255,255,0.14)');
+    aoGrad.addColorStop(1,'rgba(0,0,0,0.10)');
+    ctx.fillStyle = aoGrad;
+    roundRect(-w/2, -hoodH, w, hoodH, 11);
+    ctx.fill();
+    // fine metallic paint grain (breaks up flat gradient, reads as real paint not a vector fill)
+    applyPaintGrain(()=>roundRect(-w/2, -hoodH, w, hoodH, 11), 0.35);
+
+    // roof: clean tapered trapezoid for an unmistakable car silhouette
+    const roofBaseW = w*0.76, roofTopW = w*0.56, roofH = h*0.56;
+    const baseY = -hoodH*0.96, topY = -hoodH-roofH*0.86;
+    ctx.fillStyle = bodyGrad;
+    ctx.beginPath();
+    ctx.moveTo(-roofBaseW/2, baseY);
+    ctx.lineTo(-roofTopW/2, topY);
+    ctx.lineTo(roofTopW/2, topY);
+    ctx.lineTo(roofBaseW/2, baseY);
+    ctx.closePath();
+    ctx.fill();
+    applyPaintGrain(()=>{
+      ctx.beginPath();
+      ctx.moveTo(-roofBaseW/2, baseY);
+      ctx.lineTo(-roofTopW/2, topY);
+      ctx.lineTo(roofTopW/2, topY);
+      ctx.lineTo(roofBaseW/2, baseY);
+      ctx.closePath();
+    }, 0.35);
+    // panel seam line between hood and roof (assembled-metal detail)
+    ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(-roofBaseW/2, baseY); ctx.lineTo(roofBaseW/2, baseY); ctx.stroke();
+
+    // windshield glass: tinted by current environment (reflects sky, not a fixed flat color)
+    const glassW = roofTopW*0.86, glassY = topY+4, glassH = (baseY-topY)*0.72;
+    const glassGrad = ctx.createLinearGradient(0,glassY,0,glassY+glassH);
+    if (isCountry){
+      glassGrad.addColorStop(0,'#26301f');
+      glassGrad.addColorStop(1,'#4a5a3c');
+    } else {
+      glassGrad.addColorStop(0,'#1c2632');
+      glassGrad.addColorStop(1,'#3d4c60');
+    }
+    ctx.fillStyle = glassGrad;
+    roundRect(-glassW/2, glassY, glassW, glassH, 4);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(8,10,14,0.5)'; ctx.lineWidth = 1.3;
+    roundRect(-glassW/2, glassY, glassW, glassH, 4); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.beginPath();
+    ctx.moveTo(-glassW*0.26, glassY+2);
+    ctx.lineTo(-glassW*0.06, glassY+2);
+    ctx.lineTo(-glassW*0.22, glassY+glassH-2);
+    ctx.lineTo(-glassW*0.4, glassY+glassH-2);
+    ctx.closePath(); ctx.fill();
+
+    // side mirrors — one of the strongest "this is a car" visual cues
+    ctx.fillStyle = darken(f.body,10);
+    [-1,1].forEach(side=>{
+      ctx.beginPath();
+      ctx.ellipse(side*w*0.5, baseY-2, w*0.06, w*0.038, 0, 0, Math.PI*2);
+      ctx.fill();
+    });
+
+    // hood highlight: soft curved specular blob (real sheet metal, not a flat streak)
+    const hlGrad = ctx.createRadialGradient(-w*0.2,-hoodH*0.6,1, -w*0.2,-hoodH*0.6, w*0.22);
+    hlGrad.addColorStop(0,'rgba(255,255,255,0.38)');
+    hlGrad.addColorStop(0.55,'rgba(255,255,255,0.10)');
+    hlGrad.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.save();
+    ctx.translate(-w*0.2,-hoodH*0.6);
+    ctx.scale(1,2.6);
+    ctx.fillStyle = hlGrad;
+    ctx.beginPath(); ctx.arc(0,0,w*0.22,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+
+    // headlights: housing + glow + bulb
+    const hlY = -hoodH*0.28;
+    [-1,1].forEach(side=>{
+      const hlx = side*w*0.4;
+      const glow = ctx.createRadialGradient(hlx,hlY,1, hlx,hlY, 13);
+      glow.addColorStop(0,'rgba(255,250,220,0.9)');
+      glow.addColorStop(1,'rgba(255,250,220,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(hlx,hlY,13,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = 'rgba(25,25,28,0.55)';
+      ctx.beginPath(); ctx.ellipse(hlx,hlY,6.5,4.6,0,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#fffbe8';
+      ctx.beginPath(); ctx.ellipse(hlx,hlY,4.2,2.9,0,0,Math.PI*2); ctx.fill();
+    });
+
+    // grille: slatted bars for a clearer front-end read
+    ctx.strokeStyle = 'rgba(14,14,17,0.9)'; ctx.lineWidth = 2.2;
+    for (let i=-1;i<=1;i++){
+      ctx.beginPath();
+      ctx.moveTo(-w*0.15, -hoodH*0.16+i*4.5);
+      ctx.lineTo(w*0.15, -hoodH*0.16+i*4.5);
+      ctx.stroke();
     }
 
+    // front bumper strip
+    const bumperH = hoodH*0.15;
+    ctx.fillStyle = '#232326';
+    roundRect(-w*0.47, -bumperH, w*0.94, bumperH, 4);
+    ctx.fill();
+    // bumper seam + small bolt details
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(-w*0.47,-bumperH*0.5); ctx.lineTo(w*0.47,-bumperH*0.5); ctx.stroke();
+    ctx.fillStyle = 'rgba(120,124,132,0.5)';
+    [-0.36,0.36].forEach(bx=>{ ctx.beginPath(); ctx.arc(w*bx,-bumperH*0.5,1,0,Math.PI*2); ctx.fill(); });
+
+    // license plate
+    ctx.fillStyle = '#e9e6d8';
+    roundRect(-w*0.12, -bumperH*0.78, w*0.24, bumperH*0.5, 2);
+    ctx.fill();
+
+    // accent badge on hood
+    ctx.fillStyle = f.accent;
+    ctx.beginPath(); ctx.arc(0,-hoodH*0.48,3.4,0,Math.PI*2); ctx.fill();
+  }
+
+  function drawMotoBody(f, bodyW, bodyH, headR, big){
+    const ducking = isSliding;
+    const wheelR = bodyW*0.32;
+    const rearX = -bodyW*0.36, frontX = bodyW*0.5;
+
+    // wheel contact shadows
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    [rearX,frontX].forEach(wx=>{
+      ctx.beginPath(); ctx.ellipse(wx, 6, wheelR*0.9, 3, 0,0,Math.PI*2); ctx.fill();
+    });
+
+    function drawWheel(wx){
+      ctx.fillStyle = '#24242a';
+      ctx.beginPath(); ctx.ellipse(wx, 2, wheelR, wheelR, 0,0,Math.PI*2); ctx.fill();
+      // tread marks around the tire edge
+      ctx.strokeStyle = 'rgba(10,10,12,0.7)'; ctx.lineWidth = 1;
+      for (let a=0; a<Math.PI*2; a+=Math.PI/8){
+        ctx.beginPath();
+        ctx.moveTo(wx+Math.cos(a)*wheelR*0.86, 2+Math.sin(a)*wheelR*0.86);
+        ctx.lineTo(wx+Math.cos(a)*wheelR*0.98, 2+Math.sin(a)*wheelR*0.98);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = 'rgba(205,210,220,0.5)'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.ellipse(wx, 2, wheelR*0.6, wheelR*0.6, 0,0,Math.PI*2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(180,185,195,0.4)'; ctx.lineWidth = 1;
+      for (let a=0; a<Math.PI*2; a+=Math.PI/3){
+        ctx.beginPath();
+        ctx.moveTo(wx, 2);
+        ctx.lineTo(wx+Math.cos(a)*wheelR*0.56, 2+Math.sin(a)*wheelR*0.56);
+        ctx.stroke();
+      }
+    }
+    // rear wheel, clearly separated from front wheel (fixes overlap that read as a blob)
+    drawWheel(rearX);
+
+    // exhaust pipe running back from the engine — a strong, iconic moto cue
+    ctx.strokeStyle = '#c7ccd6';
+    ctx.lineWidth = Math.max(2.4, bodyW*0.07);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(bodyW*0.05, -bodyH*0.28);
+    ctx.lineTo(rearX+wheelR*0.3, -2);
+    ctx.stroke();
+    ctx.fillStyle = '#8a8f99';
+    ctx.beginPath(); ctx.ellipse(rearX+wheelR*0.32, -1, 3.4, 2.4, 0,0,Math.PI*2); ctx.fill();
+
+    // engine block between the wheels, anchors the silhouette as one vehicle
+    ctx.fillStyle = darken(f.body,20);
+    roundRect(-bodyW*0.12, -bodyH*0.3, bodyW*0.3, bodyH*0.24, 4);
+    ctx.fill();
+    // cooling fins + bolt details for mechanical realism
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1;
+    for (let fy=-bodyH*0.27; fy<-bodyH*0.1; fy+=bodyH*0.045){
+      ctx.beginPath(); ctx.moveTo(-bodyW*0.1, fy); ctx.lineTo(bodyW*0.16, fy); ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(150,154,162,0.55)';
+    [[-0.08,-0.28],[0.14,-0.28],[-0.08,-0.08],[0.14,-0.08]].forEach(([bx,by])=>{
+      ctx.beginPath(); ctx.arc(bodyW*bx, bodyH*by, 1.1, 0, Math.PI*2); ctx.fill();
+    });
+
+    // front fork + front wheel
+    ctx.strokeStyle = '#4a4e58';
+    ctx.lineWidth = Math.max(2.4, bodyW*0.09);
+    ctx.beginPath();
+    ctx.moveTo(bodyW*0.32, -bodyH*0.56);
+    ctx.lineTo(frontX, 2);
+    ctx.stroke();
+    drawWheel(frontX);
+
+    // handlebar with visible grips, not just an implied line
+    const barY = -bodyH*0.58;
+    ctx.strokeStyle = '#3a3e46';
+    ctx.lineWidth = Math.max(2, bodyW*0.06);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(bodyW*0.2, barY);
+    ctx.lineTo(bodyW*0.42, barY-6);
+    ctx.stroke();
+
+    // fuel tank / body, leans forward when ducking
+    const tankGrad = ctx.createLinearGradient(-bodyW/2,0,bodyW/2,0);
+    tankGrad.addColorStop(0, darken(f.body,14));
+    tankGrad.addColorStop(0.5, f.body);
+    tankGrad.addColorStop(1, lighten(f.body,20));
+    ctx.save();
+    ctx.translate(bodyW*0.05, -bodyH*0.42);
+    ctx.rotate(ducking ? 0.16 : 0);
+    ctx.fillStyle = tankGrad;
+    roundRect(-bodyW*0.28, -bodyH*0.16, bodyW*0.56, bodyH*0.3, 10);
+    ctx.fill();
+    applyPaintGrain(()=>roundRect(-bodyW*0.28, -bodyH*0.16, bodyW*0.56, bodyH*0.3, 10), 0.35);
+    // curved specular highlight (real tank sheet metal, not a flat streak)
+    const tHlGrad = ctx.createRadialGradient(-bodyW*0.1,-bodyH*0.06,1, -bodyW*0.1,-bodyH*0.06, bodyW*0.14);
+    tHlGrad.addColorStop(0,'rgba(255,255,255,0.4)');
+    tHlGrad.addColorStop(0.6,'rgba(255,255,255,0.1)');
+    tHlGrad.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.save();
+    ctx.translate(-bodyW*0.1,-bodyH*0.06);
+    ctx.scale(1,1.8);
+    ctx.fillStyle = tHlGrad;
+    ctx.beginPath(); ctx.arc(0,0,bodyW*0.14,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+    ctx.restore();
+
+    // headlight: housing + glow + bulb, mounted at the front
+    const hlx = bodyW*0.5, hly = -bodyH*0.6;
+    const glow = ctx.createRadialGradient(hlx,hly,1,hlx,hly,12);
+    glow.addColorStop(0,'rgba(255,250,220,0.88)');
+    glow.addColorStop(1,'rgba(255,250,220,0)');
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(hlx,hly,12,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(30,32,36,0.6)';
+    ctx.beginPath(); ctx.arc(hlx,hly,5,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fffbe8';
+    ctx.beginPath(); ctx.arc(hlx,hly,3.4,0,Math.PI*2); ctx.fill();
+
+    // rider legs bent to footpegs — completes a seated-figure silhouette (no floating torso)
+    ctx.strokeStyle = darken(f.accent,4);
+    ctx.lineWidth = Math.max(3, bodyW*0.11);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(bodyW*0.02, -bodyH*0.36);
+    ctx.lineTo(bodyW*0.14, -bodyH*0.14);
+    ctx.stroke();
+
+    // rider: torso leans forward when ducking, helmet head, uses accent/hair colors
+    ctx.save();
+    ctx.translate(-bodyW*0.02, -bodyH*0.52);
+    ctx.rotate(ducking ? 0.55 : -0.06);
+    const torsoGrad = ctx.createLinearGradient(-bodyW*0.16,0,bodyW*0.16,0);
+    torsoGrad.addColorStop(0, darken(f.accent,10));
+    torsoGrad.addColorStop(1, lighten(f.accent,10));
+    ctx.fillStyle = torsoGrad;
+    roundRect(-bodyW*0.18, -bodyH*0.4, bodyW*0.36, bodyH*0.44, 8);
+    ctx.fill();
+    // arm to handlebar
+    ctx.strokeStyle = darken(f.accent,6);
+    ctx.lineWidth = Math.max(2.4, bodyW*0.085);
+    ctx.beginPath();
+    ctx.moveTo(-bodyW*0.08,-bodyH*0.32); ctx.lineTo(bodyW*0.32,-bodyH*0.44);
+    ctx.stroke();
+    // helmet
+    const headGrad = ctx.createRadialGradient(-headR*0.3,-headR*0.3,1,0,-bodyH*0.46,headR*1.25);
+    headGrad.addColorStop(0, lighten(f.hair||f.accent,22));
+    headGrad.addColorStop(1, darken(f.hair||f.accent,12));
+    ctx.fillStyle = headGrad;
+    ctx.beginPath(); ctx.arc(0,-bodyH*0.46,headR,0,Math.PI*2); ctx.fill();
+    // visor
+    ctx.fillStyle = 'rgba(30,42,58,0.88)';
+    ctx.beginPath(); ctx.ellipse(headR*0.3,-bodyH*0.46,headR*0.56,headR*0.36,0,0,Math.PI*2); ctx.fill();
     ctx.restore();
   }
+
   function lighten(hex, amt){
     const c = hex.replace('#','');
     const num = parseInt(c,16);
@@ -1478,6 +1870,28 @@
   });
   loadAvatar();
   renderMissionsList();
+
+  // ---------- Vehicle picker (persisted in localStorage) ----------
+  const VEHICLE_KEY = 'mirkorun_vehicle';
+  function getSelectedVehicle(){
+    try{ return localStorage.getItem(VEHICLE_KEY) || 'character'; } catch(e){ return 'character'; }
+  }
+  function setSelectedVehicle(v){
+    try{ localStorage.setItem(VEHICLE_KEY, v); } catch(e){}
+  }
+  (function initVehiclePicker(){
+    vehicle = getSelectedVehicle();
+    const row = document.getElementById('vehicle-row');
+    row.querySelectorAll('.vehicle-btn').forEach(btn=>{
+      if (btn.dataset.vehicle === vehicle) btn.classList.add('selected');
+      btn.addEventListener('click', ()=>{
+        row.querySelectorAll('.vehicle-btn').forEach(b=>b.classList.remove('selected'));
+        btn.classList.add('selected');
+        vehicle = btn.dataset.vehicle;
+        setSelectedVehicle(vehicle);
+      });
+    });
+  })();
 
   // ---------- Build skin swatch picker ----------
   (function initSkinPicker(){
